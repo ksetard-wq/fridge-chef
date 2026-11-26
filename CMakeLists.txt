@@ -1,0 +1,53 @@
+cmake_minimum_required(VERSION 3.16)
+project(FridgeChef LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+if(MSVC)
+  add_compile_options(/utf-8 /W4)
+else()
+  add_compile_options(-Wall -Wextra)
+endif()
+
+# --- Зависимости: три однофайловые библиотеки, скачиваются при первой сборке ---
+set(TP ${CMAKE_BINARY_DIR}/third_party)
+function(fetch_header url dest)
+  if(NOT EXISTS ${TP}/${dest})
+    message(STATUS "Скачиваю ${dest}")
+    file(DOWNLOAD ${url} ${TP}/${dest} SHOW_PROGRESS STATUS st)
+    list(GET st 0 code)
+    if(NOT code EQUAL 0)
+      file(REMOVE ${TP}/${dest})
+      message(FATAL_ERROR "Не удалось скачать ${url}")
+    endif()
+  endif()
+endfunction()
+fetch_header(https://github.com/nlohmann/json/releases/download/v3.11.3/json.hpp nlohmann/json.hpp)
+fetch_header(https://raw.githubusercontent.com/yhirose/cpp-httplib/v0.15.3/httplib.h httplib.h)
+fetch_header(https://raw.githubusercontent.com/doctest/doctest/v2.4.11/doctest/doctest.h doctest/doctest.h)
+
+# --- Библиотека с логикой (без сети) ---
+file(GLOB CORE_SRC CONFIGURE_DEPENDS src/domain/*.cpp src/matching/*.cpp src/storage/*.cpp)
+add_library(fridge_core ${CORE_SRC})
+target_include_directories(fridge_core PUBLIC include ${TP})
+
+# --- Приложение ---
+file(GLOB SERVER_SRC CONFIGURE_DEPENDS src/server/*.cpp)
+add_executable(fridge_chef src/main.cpp ${SERVER_SRC})
+target_link_libraries(fridge_chef PRIVATE fridge_core)
+find_package(Threads REQUIRED)
+target_link_libraries(fridge_chef PRIVATE Threads::Threads)
+if(WIN32)
+  target_link_libraries(fridge_chef PRIVATE ws2_32)
+  target_compile_definitions(fridge_chef PRIVATE _WIN32_WINNT=0x0A00)
+endif()
+
+# --- Тесты (doctest + CTest) ---
+enable_testing()
+file(GLOB TEST_SRC CONFIGURE_DEPENDS tests/*.cpp)
+if(TEST_SRC)
+  add_executable(fridge_tests ${TEST_SRC})
+  target_link_libraries(fridge_tests PRIVATE fridge_core)
+  target_compile_definitions(fridge_tests PRIVATE FRIDGE_DATA_DIR="${CMAKE_SOURCE_DIR}/data")
+  add_test(NAME unit_tests COMMAND fridge_tests)
+endif()
